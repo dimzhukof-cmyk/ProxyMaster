@@ -20,6 +20,10 @@ internal sealed class TransparentProxyServer : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _acceptTask;
 
+    // Максимум одновременных соединений (защита от DoS)
+    private int _activeCount;
+    private const int MaxConcurrentConnections = 200;
+
     public ProxyConfig? Config { get; set; }
     public event Action<string>? LogMessage;
     public event Action<long>? BytesTransferred;
@@ -72,10 +76,38 @@ internal sealed class TransparentProxyServer : IDisposable
         client.NoDelay = true;
         using var _ = client;
 
+        // --- Защита: лимит одновременных соединений ---
+        if (Interlocked.Increment(ref _activeCount) > MaxConcurrentConnections)
+        {
+            Interlocked.Decrement(ref _activeCount);
+            LogMessage?.Invoke("[SEC] Отказ: превышен лимит соединений");
+            return;
+        }
+
+        try
+        {
+            await HandleClientInternalAsync(client, ct);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeCount);
+        }
+    }
+
+    private async Task HandleClientInternalAsync(TcpClient client, CancellationToken ct)
+    {
         var cfg = Config;
         if (cfg == null) return;
 
-        ushort srcPort    = (ushort)((IPEndPoint)client.Client.RemoteEndPoint!).Port;
+        // --- Защита: принимаем только соединения с loopback ---
+        var remoteEp = client.Client.RemoteEndPoint as IPEndPoint;
+        if (remoteEp == null || !IPAddress.IsLoopback(remoteEp.Address))
+        {
+            LogMessage?.Invoke($"[SEC] Отказ: не localhost ({remoteEp?.Address})");
+            return;
+        }
+
+        ushort srcPort    = (ushort)remoteEp.Port;
         var localStream   = client.GetStream();
         string targetHost;
         int    targetPort;
@@ -88,6 +120,17 @@ internal sealed class TransparentProxyServer : IDisposable
             // --- Режим системного прокси: браузер шлёт HTTP CONNECT ---
             var (host, port, ok) = await ReadHttpConnectHeader(localStream, ct);
             if (!ok) return;
+
+            // --- Защита от SSRF: запрещаем туннелировать к localhost ---
+            if (!IsTargetAllowed(host, port))
+            {
+                LogMessage?.Invoke($"[SEC] CONNECT к {host}:{port} заблокирован (loopback/invalid)");
+                byte[] deny = System.Text.Encoding.ASCII.GetBytes(
+                    "HTTP/1.1 403 Forbidden\r\n\r\n");
+                await localStream.WriteAsync(deny, ct);
+                return;
+            }
+
             targetHost = host;
             targetPort = port;
         }
@@ -176,6 +219,28 @@ internal sealed class TransparentProxyServer : IDisposable
         }
         catch { /* соединение закрыто с одной из сторон */ }
         finally { cts.Cancel(); }
+    }
+
+    // ---- Безопасность ----
+
+    /// <summary>
+    /// Проверяет, разрешено ли туннелировать соединение к указанному хосту.
+    /// Блокируем: loopback-адреса (SSRF), невалидные порты.
+    /// </summary>
+    private static bool IsTargetAllowed(string host, int port)
+    {
+        if (port <= 0 || port > 65535) return false;
+
+        // Блокируем "localhost" и любые варианты написания
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return false;
+        if (host.Equals("127.0.0.1"))  return false;
+        if (host.Equals("::1"))        return false;
+        if (host.StartsWith("127."))   return false;
+
+        // Блокируем IP-адреса loopback-диапазона
+        if (IPAddress.TryParse(host, out var ip) && IPAddress.IsLoopback(ip)) return false;
+
+        return true;
     }
 
     // ---- HTTP CONNECT helpers ----

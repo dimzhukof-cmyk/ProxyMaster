@@ -222,7 +222,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                     _proxyPort      = s.Proxy.Port;
                     ProxyType       = s.Proxy.Type;
                     Username        = s.Proxy.Username ?? "";
-                    Password        = s.Proxy.Password ?? "";
+                    Password        = SecureStorage.Unprotect(s.Proxy.PasswordProtected);
                     FilterByProcess = s.FilterByProcess;
                     OnPropertyChanged(nameof(ProxyPort));
 
@@ -239,11 +239,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         Settings.Proxy = new ProxyConfig
         {
-            Type     = _proxyType,
-            Host     = _proxyHost,
-            Port     = _proxyPort,
-            Username = string.IsNullOrWhiteSpace(_username) ? null : _username,
-            Password = string.IsNullOrWhiteSpace(_password) ? null : _password,
+            Type              = _proxyType,
+            Host              = _proxyHost,
+            Port              = _proxyPort,
+            Username          = string.IsNullOrWhiteSpace(_username) ? null : _username,
+            PasswordProtected = SecureStorage.Protect(_password),
         };
         Settings.FilterByProcess   = _filterByProcess;
         Settings.SelectedProcesses = Processes.Where(p => p.IsSelected).Select(p => p.Name).ToList();

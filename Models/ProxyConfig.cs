@@ -13,7 +13,13 @@ public class ProxyConfig
     public string    Host     { get; set; } = "127.0.0.1";
     public int       Port     { get; set; } = 1080;
     public string?   Username { get; set; }
+
+    /// <summary>Пароль в открытом виде — НЕ сохраняется на диск.</summary>
+    [JsonIgnore]
     public string?   Password { get; set; }
+
+    /// <summary>Пароль, зашифрованный через DPAPI — именно это пишется в settings.json.</summary>
+    public string?   PasswordProtected { get; set; }
 
     [JsonIgnore]
     public string DisplayName => $"{Type} {Host}:{Port}";
