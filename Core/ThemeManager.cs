@@ -20,25 +20,17 @@ public static class ThemeManager
         var app = Application.Current;
         if (app == null) return;
 
-        var dicts = app.Resources.MergedDictionaries;
-
-        // Убираем старую тему
-        for (int i = dicts.Count - 1; i >= 0; i--)
+        // Загружаем новую тему
+        var newTheme = new ResourceDictionary
         {
-            var src = dicts[i].Source?.OriginalString ?? "";
-            if (src.Contains("/Themes/Theme"))
-            {
-                dicts.RemoveAt(i);
-                break;
-            }
-        }
-
-        // Добавляем новую
-        var dict = new ResourceDictionary
-        {
-            Source = new Uri($"pack://application:,,,/Themes/Theme{themeId}.xaml", UriKind.Absolute)
+            Source = new Uri($"pack://application:,,,/Themes/Theme{themeId}.xaml",
+                             UriKind.Absolute)
         };
-        dicts.Insert(0, dict);
+
+        // Копируем каждый ресурс напрямую в Application.Resources —
+        // это гарантирует что все DynamicResource-биндинги обновятся немедленно
+        foreach (var key in newTheme.Keys)
+            app.Resources[key] = newTheme[key];
 
         CurrentTheme = themeId;
     }
