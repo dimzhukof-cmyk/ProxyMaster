@@ -3,8 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:ProxyMaster.ViewModels"
         xmlns:models="clr-namespace:ProxyMaster.Models"
-        Title="ProxyMaster" Height="620" Width="820"
-        MinHeight="500" MinWidth="700"
+        Title="ProxyMaster" Height="700" Width="820"
+        MinHeight="560" MinWidth="700"
         Background="{StaticResource BackgroundDarkBrush}"
         FontFamily="Segoe UI"
         WindowStartupLocation="CenterScreen">
@@ -13,11 +13,40 @@
     <vm:MainViewModel/>
   </Window.DataContext>
 
+  <Window.Resources>
+    <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+    <!-- Стиль RadioButton для тёмной темы -->
+    <Style x:Key="DarkRadio" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+      <Setter Property="FontSize"   Value="12"/>
+      <Setter Property="Margin"     Value="0,0,16,0"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+    <!-- Стиль строки ListView -->
+    <Style x:Key="ProcessRowStyle" TargetType="ListViewItem">
+      <Setter Property="Background"       Value="Transparent"/>
+      <Setter Property="Foreground"       Value="{StaticResource TextPrimaryBrush}"/>
+      <Setter Property="BorderThickness"  Value="0"/>
+      <Setter Property="Padding"          Value="4,3"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Style.Triggers>
+        <Trigger Property="IsSelected" Value="True">
+          <Setter Property="Background" Value="#2A2A3E"/>
+        </Trigger>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="#22223A"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+  </Window.Resources>
+
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="56"/>   <!-- Заголовок -->
-      <RowDefinition Height="Auto"/> <!-- Статус -->
-      <RowDefinition Height="Auto"/> <!-- Настройки -->
+      <RowDefinition Height="Auto"/> <!-- Настройки прокси -->
+      <RowDefinition Height="Auto"/> <!-- Фильтр приложений -->
       <RowDefinition Height="*"/>    <!-- Лог -->
       <RowDefinition Height="36"/>   <!-- Статусбар -->
     </Grid.RowDefinitions>
@@ -50,7 +79,7 @@
     </Border>
 
     <!-- ======= Настройки прокси ======= -->
-    <Border Grid.Row="2" Background="{StaticResource BackgroundMidBrush}"
+    <Border Grid.Row="1" Background="{StaticResource BackgroundMidBrush}"
             Margin="0,1,0,0" Padding="16,12">
       <Grid>
         <Grid.ColumnDefinitions>
@@ -62,7 +91,6 @@
           <ColumnDefinition Width="80"/>
         </Grid.ColumnDefinitions>
 
-        <!-- Тип прокси -->
         <StackPanel Grid.Column="0" Margin="0,0,8,0">
           <TextBlock Text="Тип" Foreground="{StaticResource TextSecondaryBrush}"
                      FontSize="11" Margin="0,0,0,4"/>
@@ -74,7 +102,6 @@
           </ComboBox>
         </StackPanel>
 
-        <!-- Хост -->
         <StackPanel Grid.Column="1" Margin="0,0,8,0">
           <TextBlock Text="Адрес сервера" Foreground="{StaticResource TextSecondaryBrush}"
                      FontSize="11" Margin="0,0,0,4"/>
@@ -82,7 +109,6 @@
                    Style="{StaticResource DarkTextBox}"/>
         </StackPanel>
 
-        <!-- Порт -->
         <StackPanel Grid.Column="2" Margin="0,0,8,0">
           <TextBlock Text="Порт" Foreground="{StaticResource TextSecondaryBrush}"
                      FontSize="11" Margin="0,0,0,4"/>
@@ -90,7 +116,6 @@
                    Style="{StaticResource DarkTextBox}"/>
         </StackPanel>
 
-        <!-- Логин -->
         <StackPanel Grid.Column="3" Margin="0,0,8,0">
           <TextBlock Text="Логин (необязательно)" Foreground="{StaticResource TextSecondaryBrush}"
                      FontSize="11" Margin="0,0,0,4"/>
@@ -98,7 +123,6 @@
                    Style="{StaticResource DarkTextBox}"/>
         </StackPanel>
 
-        <!-- Пароль -->
         <StackPanel Grid.Column="4" Margin="0,0,8,0">
           <TextBlock Text="Пароль" Foreground="{StaticResource TextSecondaryBrush}"
                      FontSize="11" Margin="0,0,0,4"/>
@@ -109,11 +133,108 @@
                        Padding="8,6" FontSize="13"/>
         </StackPanel>
 
-        <!-- Сохранить -->
         <StackPanel Grid.Column="5" VerticalAlignment="Bottom">
           <Button Content="Сохранить" Style="{StaticResource PrimaryButton}"
                   Command="{Binding SaveCommand}"/>
         </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- ======= Фильтр приложений ======= -->
+    <Border Grid.Row="2" Background="#16162A" Margin="0,1,0,0" Padding="16,10">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Переключатель режима -->
+        <Grid Grid.Row="0">
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="Трафик:" Foreground="{StaticResource TextSecondaryBrush}"
+                       FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            <RadioButton Content="Все приложения"
+                         IsChecked="{Binding FilterByProcessAll}"
+                         GroupName="AppFilter"
+                         Style="{StaticResource DarkRadio}"/>
+            <RadioButton Content="Только выбранные"
+                         IsChecked="{Binding FilterByProcess}"
+                         GroupName="AppFilter"
+                         Style="{StaticResource DarkRadio}"/>
+          </StackPanel>
+
+          <!-- Кнопка обновить + счётчик (показываем только в режиме фильтрации) -->
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
+                      Visibility="{Binding ShowProcessList, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding SelectedProcessCount}"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            <Button Content="↻ Обновить список"
+                    Style="{StaticResource PrimaryButton}"
+                    Command="{Binding RefreshProcessesCommand}"
+                    Padding="10,4" FontSize="11"/>
+          </StackPanel>
+        </Grid>
+
+        <!-- Список процессов (показываем только в режиме фильтрации) -->
+        <Border Grid.Row="1" Margin="0,8,0,0"
+                Visibility="{Binding ShowProcessList, Converter={StaticResource BoolToVis}}"
+                BorderBrush="#33334A" BorderThickness="1">
+          <ListView ItemsSource="{Binding Processes}"
+                    Height="160"
+                    Background="{StaticResource BackgroundDarkBrush}"
+                    BorderThickness="0"
+                    ItemContainerStyle="{StaticResource ProcessRowStyle}"
+                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                    VirtualizingPanel.IsVirtualizing="True"
+                    VirtualizingPanel.VirtualizationMode="Recycling"
+                    SelectionMode="Single">
+            <ListView.View>
+              <GridView>
+                <!-- Чекбокс -->
+                <GridViewColumn Width="36">
+                  <GridViewColumn.CellTemplate>
+                    <DataTemplate>
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                HorizontalAlignment="Center"
+                                BorderBrush="#888"
+                                Foreground="{StaticResource TextPrimaryBrush}"/>
+                    </DataTemplate>
+                  </GridViewColumn.CellTemplate>
+                </GridViewColumn>
+
+                <!-- Имя процесса -->
+                <GridViewColumn Width="160">
+                  <GridViewColumn.Header>
+                    <TextBlock Text="Процесс" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11"/>
+                  </GridViewColumn.Header>
+                  <GridViewColumn.CellTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Name}"
+                                 Foreground="{StaticResource TextPrimaryBrush}"
+                                 FontSize="12"/>
+                    </DataTemplate>
+                  </GridViewColumn.CellTemplate>
+                </GridViewColumn>
+
+                <!-- Путь -->
+                <GridViewColumn Width="550">
+                  <GridViewColumn.Header>
+                    <TextBlock Text="Путь" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11"/>
+                  </GridViewColumn.Header>
+                  <GridViewColumn.CellTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding DisplayPath}"
+                                 Foreground="{StaticResource TextSecondaryBrush}"
+                                 FontSize="11"
+                                 TextTrimming="CharacterEllipsis"/>
+                    </DataTemplate>
+                  </GridViewColumn.CellTemplate>
+                </GridViewColumn>
+              </GridView>
+            </ListView.View>
+          </ListView>
+        </Border>
       </Grid>
     </Border>
 
@@ -125,7 +246,6 @@
           <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Заголовок лога -->
         <Border Grid.Row="0" Background="{StaticResource BackgroundMidBrush}" Padding="12,0">
           <Grid>
             <TextBlock Text="Журнал событий" Foreground="{StaticResource TextSecondaryBrush}"
@@ -137,7 +257,6 @@
           </Grid>
         </Border>
 
-        <!-- Список логов -->
         <ListBox Grid.Row="1"
                  ItemsSource="{Binding LogLines}"
                  Background="Transparent"

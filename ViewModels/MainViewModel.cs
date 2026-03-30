@@ -7,6 +7,7 @@ using System.Windows;
 using ProxyMaster.Core;
 using ProxyMaster.Models;
 using SystemProxy = ProxyMaster.Core.SystemProxy;
+using System.Linq;
 
 namespace ProxyMaster.ViewModels;
 
@@ -80,21 +81,48 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set { _password = value; OnPropertyChanged(); }
     }
 
+    // ---- Фильтр по приложениям ------------------------------------------
+    private bool _filterByProcess;
+    public bool FilterByProcess
+    {
+        get => _filterByProcess;
+        set
+        {
+            _filterByProcess = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowProcessList));
+            OnPropertyChanged(nameof(FilterByProcessAll));
+        }
+    }
+    public bool FilterByProcessAll
+    {
+        get => !_filterByProcess;
+        set { if (value) FilterByProcess = false; }
+    }
+    public bool ShowProcessList => _filterByProcess;
+
+    public ObservableCollection<ProcessEntry> Processes { get; } = new();
+
+    public string SelectedProcessCount =>
+        $"Выбрано: {Processes.Count(p => p.IsSelected)} из {Processes.Count}";
+
     // ---- Лог ------------------------------------------------------------
     public ObservableCollection<string> LogLines { get; } = new();
 
     // ---- Команды --------------------------------------------------------
-    public RelayCommand StartCommand  { get; }
-    public RelayCommand StopCommand   { get; }
-    public RelayCommand SaveCommand   { get; }
-    public RelayCommand ClearLogCommand { get; }
+    public RelayCommand StartCommand          { get; }
+    public RelayCommand StopCommand           { get; }
+    public RelayCommand SaveCommand           { get; }
+    public RelayCommand ClearLogCommand       { get; }
+    public RelayCommand RefreshProcessesCommand { get; }
 
     public MainViewModel()
     {
-        StartCommand    = new RelayCommand(_ => Start(),    _ => !IsRunning);
-        StopCommand     = new RelayCommand(_ => Stop(),     _ => IsRunning);
-        SaveCommand     = new RelayCommand(_ => SaveSettings());
-        ClearLogCommand = new RelayCommand(_ => LogLines.Clear());
+        StartCommand             = new RelayCommand(_ => Start(),             _ => !IsRunning);
+        StopCommand              = new RelayCommand(_ => Stop(),              _ => IsRunning);
+        SaveCommand              = new RelayCommand(_ => SaveSettings());
+        ClearLogCommand          = new RelayCommand(_ => LogLines.Clear());
+        RefreshProcessesCommand  = new RelayCommand(_ => RefreshProcesses());
 
         LoadSettings();
     }
@@ -129,10 +157,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             _interceptor = new PacketInterceptor(_tracker, localPort, cfg.Host, cfg.Port);
             _interceptor.LogMessage += AddLog;
-            _interceptor.Start();
 
-            // Устанавливаем системный прокси (покрывает браузеры и большинство приложений)
-            SystemProxy.Enable("127.0.0.1", localPort);
+            if (_filterByProcess)
+            {
+                // Режим фильтрации: только выбранные приложения, без системного прокси
+                var selected = new HashSet<string>(
+                    Processes.Where(p => p.IsSelected).Select(p => p.Name),
+                    StringComparer.OrdinalIgnoreCase);
+                _interceptor.AllowedProcessNames = selected;
+                AddLog($"Режим: выбранные приложения ({selected.Count} шт.)");
+            }
+            else
+            {
+                // Режим «все»: системный прокси покрывает браузеры
+                SystemProxy.Enable("127.0.0.1", localPort);
+            }
+
+            _interceptor.Start();
 
             IsRunning = true;
             AddLog("=== ProxyMaster запущен ===");
@@ -155,6 +196,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void StopInternal()
     {
+        // Снимаем системный прокси в любом случае (на случай если он был установлен)
         SystemProxy.Disable();
         _interceptor?.Stop();
         _interceptor = null;
@@ -175,13 +217,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 var s = JsonSerializer.Deserialize<AppSettings>(json);
                 if (s != null)
                 {
-                    Settings   = s;
-                    ProxyHost  = s.Proxy.Host;
-                    _proxyPort = s.Proxy.Port;
-                    ProxyType  = s.Proxy.Type;
-                    Username   = s.Proxy.Username ?? "";
-                    Password   = s.Proxy.Password ?? "";
+                    Settings        = s;
+                    ProxyHost       = s.Proxy.Host;
+                    _proxyPort      = s.Proxy.Port;
+                    ProxyType       = s.Proxy.Type;
+                    Username        = s.Proxy.Username ?? "";
+                    Password        = s.Proxy.Password ?? "";
+                    FilterByProcess = s.FilterByProcess;
                     OnPropertyChanged(nameof(ProxyPort));
+
+                    // Загружаем список процессов с сохранёнными выборами
+                    if (s.SelectedProcesses.Count > 0)
+                        RefreshProcesses(s.SelectedProcesses);
                 }
             }
         }
@@ -198,10 +245,46 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             Username = string.IsNullOrWhiteSpace(_username) ? null : _username,
             Password = string.IsNullOrWhiteSpace(_password) ? null : _password,
         };
+        Settings.FilterByProcess   = _filterByProcess;
+        Settings.SelectedProcesses = Processes.Where(p => p.IsSelected).Select(p => p.Name).ToList();
 
         Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
         File.WriteAllText(SettingsPath,
             JsonSerializer.Serialize(Settings, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    // ---- Список процессов -----------------------------------------------
+
+    public void RefreshProcesses(IEnumerable<string>? preselected = null)
+    {
+        var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Сохраняем текущий выбор
+        foreach (var p in Processes.Where(p => p.IsSelected))
+            selected.Add(p.Name);
+
+        // Добавляем сохранённые (при загрузке настроек)
+        if (preselected != null)
+            foreach (var name in preselected)
+                selected.Add(name);
+
+        Application.Current?.Dispatcher.Invoke(() =>
+        {
+            Processes.Clear();
+            foreach (var (name, path) in ProcessHelper.GetRunningProcesses())
+            {
+                var entry = new ProcessEntry
+                {
+                    Name        = name,
+                    DisplayPath = path,
+                    IsSelected  = selected.Contains(name),
+                };
+                entry.PropertyChanged += (_, _) =>
+                    OnPropertyChanged(nameof(SelectedProcessCount));
+                Processes.Add(entry);
+            }
+            OnPropertyChanged(nameof(SelectedProcessCount));
+        });
     }
 
     // ---- Лог ------------------------------------------------------------

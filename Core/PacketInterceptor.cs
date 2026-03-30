@@ -29,6 +29,15 @@ internal sealed class PacketInterceptor : IDisposable
     private Thread? _threadIn;
     private volatile bool _running;
 
+    /// <summary>
+    /// Если не null — пропускаем через прокси только процессы с именами из этого набора.
+    /// null = все процессы.
+    /// </summary>
+    public IReadOnlySet<string>? AllowedProcessNames { get; set; }
+
+    // Кэш PID → имя процесса чтобы не вызывать Process.GetProcessById на каждый пакет
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, string?> _pidCache = new();
+
     public event Action<string>? LogMessage;
 
     public PacketInterceptor(ConnectionTracker tracker, ushort localProxyPort,
@@ -92,6 +101,7 @@ internal sealed class PacketInterceptor : IDisposable
         CloseHandle(ref _handleIn);
         _threadOut?.Join(2000);
         _threadIn?.Join(2000);
+        _pidCache.Clear();
         LogMessage?.Invoke("WinDivert: остановлен");
     }
 
@@ -150,6 +160,18 @@ internal sealed class PacketInterceptor : IDisposable
 
         if (isSyn && !isAck)
         {
+            // Фильтр по приложению (если включён)
+            if (AllowedProcessNames != null)
+            {
+                int? pid = ProcessHelper.GetProcessIdByLocalPort((ushort)tcpSrcPort);
+                if (pid == null) return false;
+
+                string? procName = _pidCache.GetOrAdd(pid.Value,
+                    id => ProcessHelper.GetProcessNameById(id));
+                if (procName == null || !AllowedProcessNames.Contains(procName))
+                    return false;
+            }
+
             // Новое соединение — запоминаем оригинальный dst
             byte[] dstIp = new byte[4];
             Buffer.BlockCopy(buf, dstIpOff, dstIp, 0, 4);
