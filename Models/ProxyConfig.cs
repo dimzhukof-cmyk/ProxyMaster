@@ -54,6 +54,8 @@ public class AppSettings
     public ProxyConfig     Proxy            { get; set; } = new();
     public List<ProxyRule> Rules            { get; set; } = new();
     public ushort          LocalProxyPort   { get; set; } = 8877;
-    public bool            FilterByProcess  { get; set; } = false;
-    public List<string>    SelectedProcesses{ get; set; } = new();
+    public bool            FilterByProcess   { get; set; } = false;
+    public List<string>    SelectedProcesses { get; set; } = new();
+    public string          Language          { get; set; } = "ru";
+    public string          Theme             { get; set; } = "Dark";
 }

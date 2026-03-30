@@ -1,5 +1,9 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace ProxyMaster.Core;
 
@@ -82,6 +86,57 @@ internal static class ProcessHelper
         result.Sort((a, b) =>
             string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
         return result;
+    }
+
+    // ---- Извлечение иконок (Shell32) ----
+
+    [DllImport("shell32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes,
+        ref SHFILEINFO psfi, uint cbSFI, uint uFlags);
+
+    [DllImport("user32.dll")]
+    private static extern bool DestroyIcon(IntPtr hIcon);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct SHFILEINFO
+    {
+        public IntPtr hIcon;
+        public int    iIcon;
+        public uint   dwAttributes;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szDisplayName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+        public string szTypeName;
+    }
+
+    private const uint SHGFI_ICON      = 0x100;
+    private const uint SHGFI_SMALLICON = 0x001;
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ImageSource?>
+        _iconCache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Возвращает маленькую иконку (16×16) приложения по пути к .exe.</summary>
+    public static ImageSource? GetIcon(string exePath)
+    {
+        if (string.IsNullOrEmpty(exePath)) return null;
+        return _iconCache.GetOrAdd(exePath, ExtractIcon);
+    }
+
+    private static ImageSource? ExtractIcon(string path)
+    {
+        var info = new SHFILEINFO();
+        SHGetFileInfo(path, 0, ref info, (uint)Marshal.SizeOf(info), SHGFI_ICON | SHGFI_SMALLICON);
+        if (info.hIcon == IntPtr.Zero) return null;
+        try
+        {
+            var src = Imaging.CreateBitmapSourceFromHIcon(
+                info.hIcon, Int32Rect.Empty,
+                BitmapSizeOptions.FromEmptyOptions());
+            src.Freeze(); // безопасно для других потоков
+            return src;
+        }
+        catch { return null; }
+        finally { DestroyIcon(info.hIcon); }
     }
 
     /// <summary>Возвращает имя процесса по PID (ProcessName + ".exe"), или null.</summary>

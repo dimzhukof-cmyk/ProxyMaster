@@ -1,12 +1,14 @@
 using System.ComponentModel;
+using System.Windows.Media;
 
 namespace ProxyMaster.Models;
 
 /// <summary>Запись о процессе в UI-списке выбора приложений.</summary>
 public class ProcessEntry : INotifyPropertyChanged
 {
-    public string Name        { get; init; } = "";
-    public string DisplayPath { get; init; } = "";
+    public string       Name        { get; init; } = "";
+    public string       DisplayPath { get; init; } = "";
+    public ImageSource? Icon        { get; init; }
 
     private bool _isSelected;
     public bool IsSelected

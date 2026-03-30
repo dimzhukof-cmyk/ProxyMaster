@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Windows;
 using ProxyMaster.Core;
 using ProxyMaster.Models;
+using ProxyMaster.Views;
 using SystemProxy = ProxyMaster.Core.SystemProxy;
 using System.Linq;
 
@@ -30,7 +31,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         private set { _isRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(StatusText)); OnPropertyChanged(nameof(StatusColor)); }
     }
 
-    public string StatusText  => _isRunning ? "АКТИВЕН"    : "ОСТАНОВЛЕН";
+    public string StatusText  => Loc[_isRunning ? "status_active" : "status_stopped"];
     public string StatusColor => _isRunning ? "#4ECDC4" : "#FF6B6B";
 
     private long _bytesTotal;
@@ -104,17 +105,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<ProcessEntry> Processes { get; } = new();
 
     public string SelectedProcessCount =>
-        $"Выбрано: {Processes.Count(p => p.IsSelected)} из {Processes.Count}";
+        string.Format(Loc["sel_count"], Processes.Count(p => p.IsSelected), Processes.Count);
+
+    // ---- Локализация (прокси для байндинга в XAML) -----------------------
+    public LocalizationService Loc => LocalizationService.Instance;
 
     // ---- Лог ------------------------------------------------------------
     public ObservableCollection<string> LogLines { get; } = new();
 
     // ---- Команды --------------------------------------------------------
-    public RelayCommand StartCommand          { get; }
-    public RelayCommand StopCommand           { get; }
-    public RelayCommand SaveCommand           { get; }
-    public RelayCommand ClearLogCommand       { get; }
+    public RelayCommand StartCommand            { get; }
+    public RelayCommand StopCommand             { get; }
+    public RelayCommand SaveCommand             { get; }
+    public RelayCommand ClearLogCommand         { get; }
     public RelayCommand RefreshProcessesCommand { get; }
+    public RelayCommand SettingsCommand         { get; }
 
     public MainViewModel()
     {
@@ -123,6 +128,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         SaveCommand              = new RelayCommand(_ => SaveSettings());
         ClearLogCommand          = new RelayCommand(_ => LogLines.Clear());
         RefreshProcessesCommand  = new RelayCommand(_ => RefreshProcesses());
+        SettingsCommand          = new RelayCommand(_ => OpenSettings());
+
+        // Обновляем свойства ViewModel при смене языка
+        LocalizationService.Instance.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == "Item[]")
+            {
+                OnPropertyChanged(nameof(StatusText));
+                OnPropertyChanged(nameof(SelectedProcessCount));
+            }
+        };
 
         LoadSettings();
     }
@@ -247,10 +263,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         };
         Settings.FilterByProcess   = _filterByProcess;
         Settings.SelectedProcesses = Processes.Where(p => p.IsSelected).Select(p => p.Name).ToList();
+        Settings.Language          = LocalizationService.Instance.Language;
+        Settings.Theme             = ThemeManager.CurrentTheme;
 
         Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
         File.WriteAllText(SettingsPath,
             JsonSerializer.Serialize(Settings, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    // ---- Настройки: язык и тема ----------------------------------------
+
+    private void OpenSettings()
+    {
+        var win = new SettingsWindow(
+            LocalizationService.Instance.Language,
+            ThemeManager.CurrentTheme)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        win.ShowDialog();
+        SaveSettings();
     }
 
     // ---- Список процессов -----------------------------------------------
@@ -278,6 +310,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                     Name        = name,
                     DisplayPath = path,
                     IsSelected  = selected.Contains(name),
+                    Icon        = ProcessHelper.GetIcon(path),
                 };
                 entry.PropertyChanged += (_, _) =>
                     OnPropertyChanged(nameof(SelectedProcessCount));
