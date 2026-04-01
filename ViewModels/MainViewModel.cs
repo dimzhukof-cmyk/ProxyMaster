@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Data;
 using ProxyMaster.Core;
 using ProxyMaster.Models;
 using ProxyMaster.Views;
@@ -14,7 +15,7 @@ namespace ProxyMaster.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
-    // ---- Сервисы --------------------------------------------------------
+    // ---- Services --------------------------------------------------------
     private readonly ConnectionTracker     _tracker = new();
     private PacketInterceptor?             _interceptor;
     private TransparentProxyServer?        _server;
@@ -23,7 +24,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                      "ProxyMaster", "settings.json");
 
-    // ---- Состояние ------------------------------------------------------
+    // ---- State -----------------------------------------------------------
     private bool _isRunning;
     public bool IsRunning
     {
@@ -44,7 +45,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set { _activeConnections = value; OnPropertyChanged(); }
     }
 
-    // ---- Настройки прокси -----------------------------------------------
+    // ---- Proxy settings --------------------------------------------------
     public AppSettings Settings { get; private set; } = new();
 
     private string _proxyHost = "127.0.0.1";
@@ -82,7 +83,38 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set { _password = value; OnPropertyChanged(); }
     }
 
-    // ---- Фильтр по приложениям ------------------------------------------
+    // Called from code-behind to push a value into PasswordBox
+    public Action<string>? PasswordSetter { get; set; }
+
+    // ---- Saved server profiles -------------------------------------------
+    public ObservableCollection<ProxyConfig> SavedServers { get; } = new();
+
+    private int _activeServerIndex = -1;
+    public int ActiveServerIndex
+    {
+        get => _activeServerIndex;
+        set
+        {
+            _activeServerIndex = value;
+            OnPropertyChanged();
+            if (value >= 0 && value < SavedServers.Count)
+                LoadServerProfile(SavedServers[value]);
+        }
+    }
+
+    private void LoadServerProfile(ProxyConfig cfg)
+    {
+        ProxyHost = cfg.Host;
+        _proxyPort = cfg.Port;
+        OnPropertyChanged(nameof(ProxyPort));
+        ProxyType = cfg.Type;
+        Username = cfg.Username ?? "";
+        var pwd = SecureStorage.Unprotect(cfg.PasswordProtected);
+        Password = pwd;
+        PasswordSetter?.Invoke(pwd);
+    }
+
+    // ---- Process filter --------------------------------------------------
     private bool _filterByProcess;
     public bool FilterByProcess
     {
@@ -104,33 +136,61 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ObservableCollection<ProcessEntry> Processes { get; } = new();
 
+    private ICollectionView? _filteredProcesses;
+    public ICollectionView FilteredProcesses => _filteredProcesses ??= CreateFilteredView();
+
+    private ICollectionView CreateFilteredView()
+    {
+        var view = CollectionViewSource.GetDefaultView(Processes);
+        view.Filter = obj => obj is ProcessEntry p &&
+            (string.IsNullOrEmpty(_processFilter) ||
+             p.Name.Contains(_processFilter, StringComparison.OrdinalIgnoreCase));
+        return view;
+    }
+
+    private string _processFilter = "";
+    public string ProcessFilter
+    {
+        get => _processFilter;
+        set
+        {
+            _processFilter = value;
+            OnPropertyChanged();
+            FilteredProcesses.Refresh();
+        }
+    }
+
     public string SelectedProcessCount =>
         string.Format(Loc["sel_count"], Processes.Count(p => p.IsSelected), Processes.Count);
 
-    // ---- Локализация (прокси для байндинга в XAML) -----------------------
+    // ---- Localization (proxy for XAML binding) ---------------------------
     public LocalizationService Loc => LocalizationService.Instance;
 
-    // ---- Лог ------------------------------------------------------------
+    // ---- Log -------------------------------------------------------------
     public ObservableCollection<string> LogLines { get; } = new();
 
-    // ---- Команды --------------------------------------------------------
+    // ---- Commands --------------------------------------------------------
     public RelayCommand StartCommand            { get; }
     public RelayCommand StopCommand             { get; }
     public RelayCommand SaveCommand             { get; }
     public RelayCommand ClearLogCommand         { get; }
     public RelayCommand RefreshProcessesCommand { get; }
     public RelayCommand SettingsCommand         { get; }
+    public RelayCommand AddServerCommand        { get; }
+    public RelayCommand DeleteServerCommand     { get; }
 
     public MainViewModel()
     {
-        StartCommand             = new RelayCommand(_ => Start(),             _ => !IsRunning);
-        StopCommand              = new RelayCommand(_ => Stop(),              _ => IsRunning);
-        SaveCommand              = new RelayCommand(_ => SaveSettings());
-        ClearLogCommand          = new RelayCommand(_ => LogLines.Clear());
-        RefreshProcessesCommand  = new RelayCommand(_ => RefreshProcesses());
-        SettingsCommand          = new RelayCommand(_ => OpenSettings());
+        StartCommand            = new RelayCommand(_ => Start(),            _ => !IsRunning);
+        StopCommand             = new RelayCommand(_ => Stop(),             _ => IsRunning);
+        SaveCommand             = new RelayCommand(_ => SaveSettings());
+        ClearLogCommand         = new RelayCommand(_ => LogLines.Clear());
+        RefreshProcessesCommand = new RelayCommand(_ => RefreshProcesses());
+        SettingsCommand         = new RelayCommand(_ => OpenSettings());
+        AddServerCommand        = new RelayCommand(_ => AddServer());
+        DeleteServerCommand     = new RelayCommand(_ => DeleteServer(),
+                                      _ => _activeServerIndex >= 0 && SavedServers.Count > 0);
 
-        // Обновляем свойства ViewModel при смене языка
         LocalizationService.Instance.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == "Item[]")
@@ -143,7 +203,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         LoadSettings();
     }
 
-    // ---- Запуск / Остановка ---------------------------------------------
+    // ---- Start / Stop ---------------------------------------------------
 
     public void Start()
     {
@@ -163,7 +223,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ushort localPort = Settings.LocalProxyPort;
 
             _server = new TransparentProxyServer(_tracker, localPort) { Config = cfg };
-            _server.LogMessage      += AddLog;
+            _server.LogMessage       += AddLog;
             _server.BytesTransferred += bytes =>
             {
                 _bytesTotal += bytes;
@@ -176,30 +236,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             if (_filterByProcess)
             {
-                // Режим фильтрации: только выбранные приложения, без системного прокси
                 var selected = new HashSet<string>(
                     Processes.Where(p => p.IsSelected).Select(p => p.Name),
                     StringComparer.OrdinalIgnoreCase);
                 _interceptor.AllowedProcessNames = selected;
-                AddLog($"Режим: выбранные приложения ({selected.Count} шт.)");
+                AddLog($"Mode: selected apps ({selected.Count})");
             }
             else
             {
-                // Режим «все»: системный прокси покрывает браузеры
                 SystemProxy.Enable("127.0.0.1", localPort);
             }
 
             _interceptor.Start();
 
             IsRunning = true;
-            AddLog("=== ProxyMaster запущен ===");
-            AddLog($"Системный прокси установлен → 127.0.0.1:{localPort}");
+            AddLog("=== ProxyMaster started ===");
+            AddLog($"Local proxy → 127.0.0.1:{localPort}");
             SaveSettings();
         }
         catch (Exception ex)
         {
-            AddLog($"[ОШИБКА] {ex.Message}");
-            MessageBox.Show(ex.Message, "Ошибка запуска", MessageBoxButton.OK, MessageBoxImage.Error);
+            AddLog($"[ERROR] {ex.Message}");
+            MessageBox.Show(ex.Message, "Start error", MessageBoxButton.OK, MessageBoxImage.Error);
             StopInternal();
         }
     }
@@ -207,12 +265,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public void Stop()
     {
         StopInternal();
-        AddLog("=== ProxyMaster остановлен ===");
+        AddLog("=== ProxyMaster stopped ===");
     }
 
     private void StopInternal()
     {
-        // Снимаем системный прокси в любом случае (на случай если он был установлен)
         SystemProxy.Disable();
         _interceptor?.Stop();
         _interceptor = null;
@@ -221,7 +278,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         IsRunning = false;
     }
 
-    // ---- Настройки ------------------------------------------------------
+    // ---- Settings -------------------------------------------------------
 
     private void LoadSettings()
     {
@@ -242,13 +299,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                     FilterByProcess = s.FilterByProcess;
                     OnPropertyChanged(nameof(ProxyPort));
 
-                    // Загружаем список процессов с сохранёнными выборами
+                    foreach (var srv in s.SavedServers)
+                        SavedServers.Add(srv);
+
                     if (s.SelectedProcesses.Count > 0)
                         RefreshProcesses(s.SelectedProcesses);
                 }
             }
         }
-        catch { /* первый запуск, игнорируем */ }
+        catch { /* first run */ }
     }
 
     public void SaveSettings()
@@ -265,13 +324,41 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Settings.SelectedProcesses = Processes.Where(p => p.IsSelected).Select(p => p.Name).ToList();
         Settings.Language          = LocalizationService.Instance.Language;
         Settings.Theme             = ThemeManager.CurrentTheme;
+        Settings.SavedServers      = SavedServers.ToList();
 
         Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
         File.WriteAllText(SettingsPath,
             JsonSerializer.Serialize(Settings, new JsonSerializerOptions { WriteIndented = true }));
     }
 
-    // ---- Настройки: язык и тема ----------------------------------------
+    // ---- Saved server profiles ------------------------------------------
+
+    private void AddServer()
+    {
+        var cfg = new ProxyConfig
+        {
+            Type              = _proxyType,
+            Host              = _proxyHost,
+            Port              = _proxyPort,
+            Username          = string.IsNullOrWhiteSpace(_username) ? null : _username,
+            PasswordProtected = SecureStorage.Protect(_password),
+        };
+        SavedServers.Add(cfg);
+        _activeServerIndex = SavedServers.Count - 1;
+        OnPropertyChanged(nameof(ActiveServerIndex));
+        SaveSettings();
+    }
+
+    private void DeleteServer()
+    {
+        if (_activeServerIndex < 0 || _activeServerIndex >= SavedServers.Count) return;
+        SavedServers.RemoveAt(_activeServerIndex);
+        _activeServerIndex = SavedServers.Count > 0 ? 0 : -1;
+        OnPropertyChanged(nameof(ActiveServerIndex));
+        SaveSettings();
+    }
+
+    // ---- Settings: language and theme ------------------------------------
 
     private void OpenSettings()
     {
@@ -285,17 +372,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         SaveSettings();
     }
 
-    // ---- Список процессов -----------------------------------------------
+    // ---- Process list ---------------------------------------------------
 
     public void RefreshProcesses(IEnumerable<string>? preselected = null)
     {
         var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Сохраняем текущий выбор
         foreach (var p in Processes.Where(p => p.IsSelected))
             selected.Add(p.Name);
 
-        // Добавляем сохранённые (при загрузке настроек)
         if (preselected != null)
             foreach (var name in preselected)
                 selected.Add(name);
@@ -320,7 +405,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         });
     }
 
-    // ---- Лог ------------------------------------------------------------
+    // ---- Log ------------------------------------------------------------
 
     private void AddLog(string msg)
     {
@@ -332,7 +417,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         });
     }
 
-    // ---- Вспомогательные ------------------------------------------------
+    // ---- Helpers --------------------------------------------------------
 
     private static string FormatBytes(long b)
     {
@@ -350,7 +435,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
-/// <summary>Простая реализация ICommand.</summary>
+/// <summary>Simple ICommand implementation.</summary>
 public class RelayCommand : System.Windows.Input.ICommand
 {
     private readonly Action<object?> _execute;

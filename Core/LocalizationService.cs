@@ -85,6 +85,8 @@ public sealed class LocalizationService : INotifyPropertyChanged
             ["theme_blue"]     = "Dark Blue",
             ["theme_green"]    = "Dark Green",
             ["theme_purple"]   = "Dark Purple",
+            ["lbl_saved_servers"] = "Saved servers",
+            ["lbl_search"]     = "Search...",
         },
         ["ru"] = new()
         {
@@ -120,6 +122,8 @@ public sealed class LocalizationService : INotifyPropertyChanged
             ["theme_blue"]     = "Тёмно-синяя",
             ["theme_green"]    = "Тёмно-зелёная",
             ["theme_purple"]   = "Тёмно-фиолетовая",
+            ["lbl_saved_servers"] = "Серверы",
+            ["lbl_search"]     = "Поиск...",
         },
         ["de"] = new()
         {
@@ -155,6 +159,8 @@ public sealed class LocalizationService : INotifyPropertyChanged
             ["theme_blue"]     = "Dunkelblau",
             ["theme_green"]    = "Dunkelgrün",
             ["theme_purple"]   = "Dunkellila",
+            ["lbl_saved_servers"] = "Gespeicherte Server",
+            ["lbl_search"]     = "Suchen...",
         },
         ["es"] = new()
         {
@@ -190,6 +196,8 @@ public sealed class LocalizationService : INotifyPropertyChanged
             ["theme_blue"]     = "Azul oscuro",
             ["theme_green"]    = "Verde oscuro",
             ["theme_purple"]   = "Púrpura oscuro",
+            ["lbl_saved_servers"] = "Servidores",
+            ["lbl_search"]     = "Buscar...",
         },
         ["fr"] = new()
         {
@@ -225,6 +233,8 @@ public sealed class LocalizationService : INotifyPropertyChanged
             ["theme_blue"]     = "Bleu foncé",
             ["theme_green"]    = "Vert foncé",
             ["theme_purple"]   = "Violet foncé",
+            ["lbl_saved_servers"] = "Serveurs",
+            ["lbl_search"]     = "Rechercher...",
         },
         ["it"] = new()
         {
@@ -260,6 +270,8 @@ public sealed class LocalizationService : INotifyPropertyChanged
             ["theme_blue"]     = "Blu scuro",
             ["theme_green"]    = "Verde scuro",
             ["theme_purple"]   = "Viola scuro",
+            ["lbl_saved_servers"] = "Server",
+            ["lbl_search"]     = "Cerca...",
         },
         ["zh"] = new()
         {
@@ -295,6 +307,8 @@ public sealed class LocalizationService : INotifyPropertyChanged
             ["theme_blue"]     = "深蓝色",
             ["theme_green"]    = "深绿色",
             ["theme_purple"]   = "深紫色",
+            ["lbl_saved_servers"] = "服务器",
+            ["lbl_search"]     = "搜索...",
         },
     };
 }

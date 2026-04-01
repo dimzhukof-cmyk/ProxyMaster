@@ -17,6 +17,9 @@ public partial class MainWindow : Window
         PasswordInput.PasswordChanged += (s, e) =>
             _vm.Password = PasswordInput.Password;
 
+        // Позволяет ViewModel обновить PasswordBox при загрузке сохранённого профиля
+        _vm.PasswordSetter = pwd => PasswordInput.Password = pwd;
+
         // Авто-скролл лога вниз
         _vm.LogLines.CollectionChanged += (s, e) =>
         {

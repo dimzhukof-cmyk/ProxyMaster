@@ -58,4 +58,5 @@ public class AppSettings
     public List<string>    SelectedProcesses { get; set; } = new();
     public string          Language          { get; set; } = "ru";
     public string          Theme             { get; set; } = "Dark";
+    public List<ProxyConfig> SavedServers    { get; set; } = new();
 }

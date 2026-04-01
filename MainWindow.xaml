@@ -5,6 +5,7 @@
         xmlns:models="clr-namespace:ProxyMaster.Models"
         xmlns:core="clr-namespace:ProxyMaster.Core"
         Title="ProxyMaster" Height="700" Width="820"
+        Icon="pack://application:,,,/Icon/PM_logo_256x256.png"
         MinHeight="560" MinWidth="700"
         Background="{DynamicResource BackgroundDarkBrush}"
         FontFamily="Segoe UI"
@@ -86,67 +87,105 @@
     <Border Grid.Row="1" Background="{DynamicResource BackgroundMidBrush}"
             Margin="0,1,0,0" Padding="16,12">
       <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="120"/>
-          <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="90"/>
-          <ColumnDefinition Width="160"/>
-          <ColumnDefinition Width="160"/>
-          <ColumnDefinition Width="90"/>
-        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="8"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-        <StackPanel Grid.Column="0" Margin="0,0,8,0">
-          <TextBlock Text="{Binding Loc[lbl_type]}"
-                     Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
-          <ComboBox SelectedValue="{Binding ProxyType}" SelectedValuePath="Tag"
-                    Style="{StaticResource DarkComboBox}">
-            <ComboBoxItem Content="SOCKS5" Tag="{x:Static models:ProxyType.Socks5}"/>
-            <ComboBoxItem Content="HTTP"   Tag="{x:Static models:ProxyType.Http}"/>
-          </ComboBox>
-        </StackPanel>
+        <!-- Saved servers row -->
+        <Grid Grid.Row="0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="36"/>
+            <ColumnDefinition Width="36"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0"
+                     Text="{Binding Loc[lbl_saved_servers]}"
+                     Foreground="{DynamicResource TextSecondaryBrush}"
+                     FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+          <ComboBox Grid.Column="1"
+                    ItemsSource="{Binding SavedServers}"
+                    SelectedIndex="{Binding ActiveServerIndex}"
+                    DisplayMemberPath="DisplayName"
+                    Style="{StaticResource DarkComboBox}"
+                    Margin="0,0,8,0"/>
+          <Button Grid.Column="2" Content="+"
+                  Style="{StaticResource PrimaryButton}"
+                  Command="{Binding AddServerCommand}"
+                  Padding="0" FontSize="15" FontWeight="Light" Margin="0,0,4,0"/>
+          <Button Grid.Column="3" Content="−"
+                  Style="{StaticResource DangerButton}"
+                  Command="{Binding DeleteServerCommand}"
+                  Padding="0" FontSize="15" FontWeight="Light"/>
+        </Grid>
 
-        <StackPanel Grid.Column="1" Margin="0,0,8,0">
-          <TextBlock Text="{Binding Loc[lbl_host]}"
-                     Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
-          <TextBox Text="{Binding ProxyHost, UpdateSourceTrigger=PropertyChanged}"
-                   Style="{StaticResource DarkTextBox}"/>
-        </StackPanel>
+        <!-- Proxy fields -->
+        <Grid Grid.Row="2">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="120"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="90"/>
+            <ColumnDefinition Width="160"/>
+            <ColumnDefinition Width="160"/>
+            <ColumnDefinition Width="90"/>
+          </Grid.ColumnDefinitions>
 
-        <StackPanel Grid.Column="2" Margin="0,0,8,0">
-          <TextBlock Text="{Binding Loc[lbl_port]}"
-                     Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
-          <TextBox Text="{Binding ProxyPort, UpdateSourceTrigger=PropertyChanged}"
-                   Style="{StaticResource DarkTextBox}"/>
-        </StackPanel>
+          <StackPanel Grid.Column="0" Margin="0,0,8,0">
+            <TextBlock Text="{Binding Loc[lbl_type]}"
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
+            <ComboBox SelectedValue="{Binding ProxyType}" SelectedValuePath="Tag"
+                      Style="{StaticResource DarkComboBox}">
+              <ComboBoxItem Content="SOCKS5" Tag="{x:Static models:ProxyType.Socks5}"/>
+              <ComboBoxItem Content="HTTP"   Tag="{x:Static models:ProxyType.Http}"/>
+            </ComboBox>
+          </StackPanel>
 
-        <StackPanel Grid.Column="3" Margin="0,0,8,0">
-          <TextBlock Text="{Binding Loc[lbl_login]}"
-                     Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
-          <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"
-                   Style="{StaticResource DarkTextBox}"/>
-        </StackPanel>
+          <StackPanel Grid.Column="1" Margin="0,0,8,0">
+            <TextBlock Text="{Binding Loc[lbl_host]}"
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding ProxyHost, UpdateSourceTrigger=PropertyChanged}"
+                     Style="{StaticResource DarkTextBox}"/>
+          </StackPanel>
 
-        <StackPanel Grid.Column="4" Margin="0,0,8,0">
-          <TextBlock Text="{Binding Loc[lbl_password]}"
-                     Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
-          <PasswordBox x:Name="PasswordInput"
-                       Background="{DynamicResource BackgroundLightBrush}"
-                       Foreground="{DynamicResource TextPrimaryBrush}"
-                       BorderBrush="{DynamicResource BorderColorBrush}" BorderThickness="1"
-                       Padding="8,6" FontSize="13"/>
-        </StackPanel>
+          <StackPanel Grid.Column="2" Margin="0,0,8,0">
+            <TextBlock Text="{Binding Loc[lbl_port]}"
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding ProxyPort, UpdateSourceTrigger=PropertyChanged}"
+                     Style="{StaticResource DarkTextBox}"/>
+          </StackPanel>
 
-        <StackPanel Grid.Column="5" VerticalAlignment="Bottom">
-          <Button Content="{Binding Loc[btn_save]}" Style="{StaticResource PrimaryButton}"
-                  Command="{Binding SaveCommand}"/>
-        </StackPanel>
+          <StackPanel Grid.Column="3" Margin="0,0,8,0">
+            <TextBlock Text="{Binding Loc[lbl_login]}"
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"
+                     Style="{StaticResource DarkTextBox}"/>
+          </StackPanel>
+
+          <StackPanel Grid.Column="4" Margin="0,0,8,0">
+            <TextBlock Text="{Binding Loc[lbl_password]}"
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4"/>
+            <PasswordBox x:Name="PasswordInput"
+                         Background="{DynamicResource BackgroundLightBrush}"
+                         Foreground="{DynamicResource TextPrimaryBrush}"
+                         BorderBrush="{DynamicResource BorderColorBrush}" BorderThickness="1"
+                         Padding="8,6" FontSize="13"/>
+          </StackPanel>
+
+          <StackPanel Grid.Column="5" VerticalAlignment="Bottom">
+            <Button Content="{Binding Loc[btn_save]}" Style="{StaticResource PrimaryButton}"
+                    Command="{Binding SaveCommand}"/>
+          </StackPanel>
+        </Grid>
       </Grid>
     </Border>
 
     <!-- ======= Фильтр приложений ======= -->
-    <Border Grid.Row="2" Background="#16162A" Margin="0,1,0,0" Padding="16,10">
+    <Border Grid.Row="2" Background="{DynamicResource BackgroundMidBrush}" Margin="0,1,0,0" Padding="16,10">
       <Grid>
         <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -176,11 +215,34 @@
           </StackPanel>
         </Grid>
 
+        <!-- Search box -->
+        <Grid Grid.Row="1" Margin="0,8,0,0"
+              Visibility="{Binding ShowProcessList, Converter={StaticResource BoolToVis}}">
+          <TextBox x:Name="ProcessSearchBox"
+                   Text="{Binding ProcessFilter, UpdateSourceTrigger=PropertyChanged}"
+                   Style="{StaticResource DarkTextBox}"/>
+          <TextBlock Text="{Binding Loc[lbl_search]}"
+                     IsHitTestVisible="False"
+                     Foreground="{DynamicResource TextSecondaryBrush}"
+                     FontSize="12" Padding="10,6" Opacity="0.6">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Visibility" Value="Collapsed"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding Text, ElementName=ProcessSearchBox}" Value="">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+        </Grid>
+
         <!-- Список процессов -->
-        <Border Grid.Row="1" Margin="0,8,0,0"
+        <Border Grid.Row="2" Margin="0,6,0,0"
                 Visibility="{Binding ShowProcessList, Converter={StaticResource BoolToVis}}"
                 BorderBrush="{DynamicResource BorderColorBrush}" BorderThickness="1">
-          <ListView ItemsSource="{Binding Processes}"
+          <ListView ItemsSource="{Binding FilteredProcesses}"
                     Height="160"
                     Background="{DynamicResource BackgroundDarkBrush}"
                     BorderThickness="0"

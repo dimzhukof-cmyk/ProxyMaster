@@ -24,6 +24,7 @@ WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
+SetupIconFile=..\Icon\ProxyMaster.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 MinVersion=10.0.17763
 
