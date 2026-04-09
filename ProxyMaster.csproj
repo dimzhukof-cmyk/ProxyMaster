@@ -5,6 +5,8 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <AssemblyName>ProxyMaster</AssemblyName>
+    <Version>1.1.0</Version>
+    <FileVersion>1.1.0</FileVersion>
     <RootNamespace>ProxyMaster</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -23,6 +25,9 @@
   <ItemGroup>
     <Resource Include="Icon\ProxyMaster.ico"/>
     <Resource Include="Icon\PM_logo_256x256.png"/>
+    <Resource Include="Icon\ProxyMaster_compact_screen.jpg"/>
+    <Resource Include="Icon\ProxyMaster_compact_screen_off.jpg"/>
+    <Resource Include="Icon\ic_settings.png"/>
   </ItemGroup>
 
   <!-- Copy WinDivert binaries to output -->

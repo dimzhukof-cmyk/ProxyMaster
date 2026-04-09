@@ -60,7 +60,11 @@ internal struct WinDivertAddress
     [FieldOffset(8)]  public uint   Flags;      // битовое поле
     [FieldOffset(12)] public uint   Reserved2;
     [FieldOffset(16)] public ulong  Reserved3;
-    // [24..87] = union data (IfIdx, SubIfIdx, etc.)
+    // Network layer union starts at offset 24:
+    //   UINT32 IfIdx      [24]
+    //   UINT32 SubIfIdx   [28]
+    [FieldOffset(24)] public uint IfIdx;
+    [FieldOffset(28)] public uint SubIfIdx;
 
     // Outbound = бит 17 поля Flags
     // Layer [7:0], Event [15:8], Sniff[16], Outbound[17], Loopback[18] ...
@@ -72,5 +76,12 @@ internal struct WinDivertAddress
     {
         if (value) Flags |=  (1u << 17);
         else       Flags &= ~(1u << 17);
+    }
+
+    /// <summary>Установить флаг Loopback.</summary>
+    public void SetLoopback(bool value)
+    {
+        if (value) Flags |=  (1u << 18);
+        else       Flags &= ~(1u << 18);
     }
 }

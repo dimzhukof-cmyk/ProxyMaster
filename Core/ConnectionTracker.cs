@@ -7,6 +7,13 @@ namespace ProxyMaster.Core;
 /// Хранит таблицу: исходный порт приложения → оригинальный dst (IP:Port).
 /// Используется прозрачным прокси для определения, куда реально направить соединение.
 /// </summary>
+/// <remarks>
+/// Потокобезопасность: все публичные методы (<see cref="Add"/>, <see cref="TryGet"/>,
+/// <see cref="Remove"/>) делегируют операции в <see cref="System.Collections.Concurrent.ConcurrentDictionary{TKey,TValue}"/>
+/// и не требуют внешней синхронизации. Метод <see cref="Add"/> может вызвать
+/// <see cref="Cleanup"/> при достижении лимита — это тоже атомарно на уровне словаря,
+/// хотя краткосрочное превышение лимита на единицу допустимо в конкурентной среде.
+/// </remarks>
 internal sealed class ConnectionTracker
 {
     // ключ: srcPort приложения (ushort)

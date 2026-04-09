@@ -29,11 +29,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool IsRunning
     {
         get => _isRunning;
-        private set { _isRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(StatusText)); OnPropertyChanged(nameof(StatusColor)); }
+        private set { _isRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(StatusText)); OnPropertyChanged(nameof(StatusColor)); OnPropertyChanged(nameof(CompactStatusText)); }
     }
 
-    public string StatusText  => Loc[_isRunning ? "status_active" : "status_stopped"];
-    public string StatusColor => _isRunning ? "#4ECDC4" : "#FF6B6B";
+    public string StatusText        => Loc[_isRunning ? "status_active" : "status_stopped"];
+    public string StatusColor       => _isRunning ? "#4ECDC4" : "#FF6B6B";
+    public string CompactStatusText => _isRunning ? "ON" : "OFF";
+    public string ProxyTypeDisplay  => _proxyType == ProxyType.Socks5 ? "SOCKS5" : "HTTP";
 
     private long _bytesTotal;
     public string BytesDisplay => FormatBytes(_bytesTotal);
@@ -66,7 +68,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ProxyType ProxyType
     {
         get => _proxyType;
-        set { _proxyType = value; OnPropertyChanged(); }
+        set { _proxyType = value; OnPropertyChanged(); OnPropertyChanged(nameof(ProxyTypeDisplay)); }
     }
 
     private string _username = "";
@@ -169,27 +171,77 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     // ---- Log -------------------------------------------------------------
     public ObservableCollection<string> LogLines { get; } = new();
 
+    // Полный список строк (до фильтра)
+    private readonly List<string> _allLogLines = new();
+
+    private string _logFilter = string.Empty;
+    public string LogFilter
+    {
+        get => _logFilter;
+        set
+        {
+            if (_logFilter == value) return;
+            _logFilter = value;
+            OnPropertyChanged();
+            ApplyLogFilter();
+        }
+    }
+
+    private void ApplyLogFilter()
+    {
+        LogLines.Clear();
+        var f = _logFilter;
+        var lines = string.IsNullOrEmpty(f)
+            ? _allLogLines
+            : _allLogLines.Where(l => l.Contains(f, StringComparison.OrdinalIgnoreCase));
+        foreach (var l in lines)
+            LogLines.Add(l);
+    }
+
+    // Очередь для логов: proxy-потоки пишут сюда без блокировки,
+    // UI-таймер вычитывает каждые 50 мс — thread pool никогда не блокируется
+    private volatile bool _bytesUpdatePending;
+
+    // ---- Compact mode ----------------------------------------------------
+    private bool _isCompactMode;
+    public bool IsCompactMode
+    {
+        get => _isCompactMode;
+        set
+        {
+            if (_isCompactMode == value) return;
+            _isCompactMode = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsFullMode));
+        }
+    }
+    public bool IsFullMode => !_isCompactMode;
+
     // ---- Commands --------------------------------------------------------
     public RelayCommand StartCommand            { get; }
     public RelayCommand StopCommand             { get; }
+    public RelayCommand ToggleProxyCommand      { get; }
     public RelayCommand SaveCommand             { get; }
     public RelayCommand ClearLogCommand         { get; }
     public RelayCommand RefreshProcessesCommand { get; }
     public RelayCommand SettingsCommand         { get; }
     public RelayCommand AddServerCommand        { get; }
     public RelayCommand DeleteServerCommand     { get; }
+    public RelayCommand ToggleCompactCommand    { get; }
 
     public MainViewModel()
     {
         StartCommand            = new RelayCommand(_ => Start(),            _ => !IsRunning);
         StopCommand             = new RelayCommand(_ => Stop(),             _ => IsRunning);
+        ToggleProxyCommand      = new RelayCommand(_ => { if (IsRunning) Stop(); else Start(); });
         SaveCommand             = new RelayCommand(_ => SaveSettings());
-        ClearLogCommand         = new RelayCommand(_ => LogLines.Clear());
+        ClearLogCommand         = new RelayCommand(_ => { LogLines.Clear(); _allLogLines.Clear(); });
         RefreshProcessesCommand = new RelayCommand(_ => RefreshProcesses());
         SettingsCommand         = new RelayCommand(_ => OpenSettings());
         AddServerCommand        = new RelayCommand(_ => AddServer());
         DeleteServerCommand     = new RelayCommand(_ => DeleteServer(),
                                       _ => _activeServerIndex >= 0 && SavedServers.Count > 0);
+        ToggleCompactCommand    = new RelayCommand(_ => IsCompactMode = !IsCompactMode);
 
         LocalizationService.Instance.PropertyChanged += (_, e) =>
         {
@@ -226,8 +278,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             _server.LogMessage       += AddLog;
             _server.BytesTransferred += bytes =>
             {
-                _bytesTotal += bytes;
-                Application.Current?.Dispatcher.Invoke(() => OnPropertyChanged(nameof(BytesDisplay)));
+                Interlocked.Add(ref _bytesTotal, bytes);
+                if (!_bytesUpdatePending)
+                {
+                    _bytesUpdatePending = true;
+                    Application.Current?.Dispatcher.BeginInvoke(() =>
+                    {
+                        _bytesUpdatePending = false;
+                        OnPropertyChanged(nameof(BytesDisplay));
+                    });
+                }
             };
             _server.Start();
 
@@ -253,6 +313,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             AddLog("=== ProxyMaster started ===");
             AddLog($"Local proxy → 127.0.0.1:{localPort}");
             SaveSettings();
+        }
+        catch (System.Net.Sockets.SocketException sex) when (sex.SocketErrorCode == System.Net.Sockets.SocketError.AddressAlreadyInUse)
+        {
+            string msg = $"Порт {Settings.LocalProxyPort} уже занят.\n\nЗакройте другой экземпляр ProxyMaster и попробуйте снова.";
+            AddLog($"[ERROR] Порт {Settings.LocalProxyPort} занят");
+            MessageBox.Show(msg, "ProxyMaster", MessageBoxButton.OK, MessageBoxImage.Warning);
+            StopInternal();
         }
         catch (Exception ex)
         {
@@ -409,11 +476,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void AddLog(string msg)
     {
+        if (string.IsNullOrEmpty(msg)) return;
         string line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
-        Application.Current?.Dispatcher.Invoke(() =>
+        Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            LogLines.Add(line);
-            if (LogLines.Count > 500) LogLines.RemoveAt(0);
+            if (string.IsNullOrEmpty(line)) return;
+            _allLogLines.Add(line);
+            if (_allLogLines.Count > 500) _allLogLines.RemoveAt(0);
+
+            // Добавляем в видимый список только если проходит фильтр
+            if (string.IsNullOrEmpty(_logFilter) ||
+                line.Contains(_logFilter, StringComparison.OrdinalIgnoreCase))
+            {
+                LogLines.Add(line);
+                if (LogLines.Count > 500) LogLines.RemoveAt(0);
+            }
         });
     }
 

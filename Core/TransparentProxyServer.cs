@@ -99,27 +99,29 @@ internal sealed class TransparentProxyServer : IDisposable
         var cfg = Config;
         if (cfg == null) return;
 
-        // --- Защита: принимаем только соединения с loopback ---
+        // Принимаем соединения с loopback (системный прокси) и с реального IP машины (WinDivert-путь)
         var remoteEp = client.Client.RemoteEndPoint as IPEndPoint;
-        if (remoteEp == null || !IPAddress.IsLoopback(remoteEp.Address))
-        {
-            LogMessage?.Invoke($"[SEC] Отказ: не localhost ({remoteEp?.Address})");
-            return;
-        }
+        if (remoteEp == null) return;
 
         ushort srcPort    = (ushort)remoteEp.Port;
         var localStream   = client.GetStream();
-        string targetHost;
-        int    targetPort;
+        string targetHost = "?";
+        int    targetPort = 0;
 
-        // Определяем режим: HTTP CONNECT (системный прокси) или WinDivert (прозрачный)
-        bool isHttpConnect = await PeekIsHttpConnect(localStream, ct);
+        // Определяем режим: HTTP CONNECT, plain HTTP proxy или WinDivert (прозрачный)
+        var (isHttpConnect, isPlainHttp, peekedBytes) = await PeekIsHttpConnect(localStream, ct);
+
+        byte[]? plainHttpRequestBytes = null;
 
         if (isHttpConnect)
         {
             // --- Режим системного прокси: браузер шлёт HTTP CONNECT ---
-            var (host, port, ok) = await ReadHttpConnectHeader(localStream, ct);
-            if (!ok) return;
+            var (host, port, ok) = await ReadHttpConnectHeader(localStream, peekedBytes, ct);
+            if (!ok)
+            {
+                LogMessage?.Invoke($"[WARN] CONNECT parse failed, port {srcPort}");
+                return;
+            }
 
             // --- Защита от SSRF: запрещаем туннелировать к localhost ---
             if (!IsTargetAllowed(host, port))
@@ -134,30 +136,57 @@ internal sealed class TransparentProxyServer : IDisposable
             targetHost = host;
             targetPort = port;
         }
+        else if (isPlainHttp)
+        {
+            // --- Режим plain HTTP proxy: GET http://host/path HTTP/1.1 ---
+            var (host, port, reqBytes, ok) = await ReadPlainHttpRequest(localStream, peekedBytes, ct);
+            if (!ok)
+            {
+                LogMessage?.Invoke($"[WARN] Plain HTTP parse failed, port {srcPort}");
+                return;
+            }
+            if (!IsTargetAllowed(host, port))
+            {
+                LogMessage?.Invoke($"[SEC] Plain HTTP к {host}:{port} заблокирован");
+                return;
+            }
+            targetHost = host;
+            targetPort = port;
+            plainHttpRequestBytes = reqBytes;
+            LogMessage?.Invoke($"[HTTP] {targetHost}:{targetPort}");
+        }
         else
         {
             // --- Режим WinDivert: ищем dst по srcPort ---
             if (!_tracker.TryGet(srcPort, out var originalDst) || originalDst == null)
             {
-                LogMessage?.Invoke($"[WARN] Нет записи для порта {srcPort}");
+                string ascii = peekedBytes.Length > 0
+                    ? new string(peekedBytes.Select(b => b >= 32 && b < 127 ? (char)b : '.').ToArray())
+                    : "(empty)";
+                LogMessage?.Invoke($"[WARN] port {srcPort}: \"{ascii}\"");
                 return;
             }
             targetHost = originalDst.Address.ToString();
             targetPort = originalDst.Port;
+            LogMessage?.Invoke($"[WD] {targetHost}:{targetPort}");
         }
 
         NetworkStream? upstreamStream = null;
+        // Таймаут на установку соединения с прокси (SOCKS5/HTTP CONNECT)
+        using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        connectCts.CancelAfter(TimeSpan.FromSeconds(10));
+
         try
         {
             upstreamStream = cfg.Type switch
             {
                 ProxyType.Socks5 => await Socks5Client.ConnectAsync(
                     cfg.Host, cfg.Port, targetHost, targetPort,
-                    cfg.Username, cfg.Password, ct),
+                    cfg.Username, cfg.Password, connectCts.Token),
 
                 ProxyType.Http => await HttpProxyClient.ConnectAsync(
                     cfg.Host, cfg.Port, targetHost, targetPort,
-                    cfg.Username, cfg.Password, ct),
+                    cfg.Username, cfg.Password, connectCts.Token),
 
                 _ => throw new NotSupportedException()
             };
@@ -169,6 +198,17 @@ internal sealed class TransparentProxyServer : IDisposable
                     "HTTP/1.1 200 Connection established\r\n\r\n");
                 await localStream.WriteAsync(ok200, ct);
             }
+            else if (isPlainHttp)
+            {
+                // Plain HTTP proxy: шлём весь запрос как есть upstream
+                await upstreamStream.WriteAsync(plainHttpRequestBytes, ct);
+            }
+            else if (peekedBytes.Length > 0)
+            {
+                // WinDivert-путь: первые N байт (начало TLS ClientHello и т.п.)
+                // были прочитаны при peek — отправляем их upstream прежде чем начать pipe
+                await upstreamStream.WriteAsync(peekedBytes, ct);
+            }
 
             LogMessage?.Invoke($"[→] {targetHost}:{targetPort} via {cfg.Type}");
 
@@ -176,7 +216,12 @@ internal sealed class TransparentProxyServer : IDisposable
             using var upStream = upstreamStream;
             await PipeAsync(localStream, upStream, ct);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Сработал 10-секундный таймаут (не остановка сервера)
+            LogMessage?.Invoke($"[TO] {targetHost}:{targetPort} — timeout 10s");
+        }
+        catch (OperationCanceledException) { /* нормальная остановка */ }
         catch (Exception ex)
         {
             LogMessage?.Invoke($"[ERR] {targetHost}:{targetPort} — {ex.Message}");
@@ -245,34 +290,103 @@ internal sealed class TransparentProxyServer : IDisposable
 
     // ---- HTTP CONNECT helpers ----
 
-    private static async Task<bool> PeekIsHttpConnect(NetworkStream s, CancellationToken ct)
-    {
-        // Читаем первые 7 байт без извлечения (peek через буфер)
-        byte[] peek = new byte[7];
-        try
-        {
-            int n = await s.ReadAsync(peek.AsMemory(0, 7), ct);
-            // Кладём обратно в _peekBuf для последующего чтения
-            // (NetworkStream не поддерживает peek, используем обёртку)
-            Array.Resize(ref peek, n);
-        }
-        catch { return false; }
-
-        _peekBuf = peek;
-        return peek.Length >= 7 &&
-               peek[0] == 'C' && peek[1] == 'O' && peek[2] == 'N' &&
-               peek[3] == 'N' && peek[4] == 'E' && peek[5] == 'C' && peek[6] == 'T';
-    }
-
-    [ThreadStatic] private static byte[]? _peekBuf;
-
-    private async Task<(string host, int port, bool ok)> ReadHttpConnectHeader(
+    /// <summary>
+    /// Читает первые 7 байт и определяет режим соединения:
+    /// HTTP CONNECT, plain HTTP proxy (GET/POST/...) или WinDivert.
+    /// Возвращает прочитанные байты, чтобы они не были потеряны.
+    /// </summary>
+    private static async Task<(bool isConnect, bool isPlainHttp, byte[] peeked)> PeekIsHttpConnect(
         NetworkStream s, CancellationToken ct)
     {
-        // Читаем заголовок до \r\n\r\n
+        byte[] peekedBuf = new byte[7];
+        int bytesRead = 0;
+        try { bytesRead = await s.ReadAsync(peekedBuf.AsMemory(0, 7), ct); }
+        catch { return (false, false, Array.Empty<byte>()); }
+
+        byte[] peeked = peekedBuf[..bytesRead];
+        bool isConnect = bytesRead >= 7 &&
+            peekedBuf[0] == 'C' && peekedBuf[1] == 'O' && peekedBuf[2] == 'N' &&
+            peekedBuf[3] == 'N' && peekedBuf[4] == 'E' && peekedBuf[5] == 'C' && peekedBuf[6] == 'T';
+
+        // Plain HTTP proxy: GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH
+        bool isPlainHttp = !isConnect && bytesRead >= 3 &&
+            (peekedBuf[0] == 'G' || peekedBuf[0] == 'P' || peekedBuf[0] == 'D' ||
+             peekedBuf[0] == 'H' || peekedBuf[0] == 'O');
+
+        return (isConnect, isPlainHttp, peeked);
+    }
+
+    /// <summary>
+    /// Читает полный plain HTTP запрос и извлекает целевой хост и порт.
+    /// Возвращает все прочитанные байты для последующей отправки upstream.
+    /// </summary>
+    private static async Task<(string host, int port, byte[] requestBytes, bool ok)>
+        ReadPlainHttpRequest(NetworkStream s, byte[] peeked, CancellationToken ct)
+    {
         var sb = new System.Text.StringBuilder();
-        if (_peekBuf != null)
-            sb.Append(System.Text.Encoding.ASCII.GetString(_peekBuf));
+        sb.Append(System.Text.Encoding.ASCII.GetString(peeked));
+
+        try
+        {
+            byte[] buf = new byte[1];
+            while (!sb.ToString().Contains("\r\n\r\n"))
+            {
+                int n = await s.ReadAsync(buf, ct);
+                if (n == 0) return ("", 0, Array.Empty<byte>(), false);
+                sb.Append((char)buf[0]);
+                if (sb.Length > 8192) return ("", 0, Array.Empty<byte>(), false);
+            }
+        }
+        catch { return ("", 0, Array.Empty<byte>(), false); }
+
+        // Парсим первую строку: "GET http://host[:port]/path HTTP/1.1"
+        string firstLine = sb.ToString().Split('\n')[0].Trim();
+        var parts = firstLine.Split(' ');
+        if (parts.Length < 2) return ("", 0, Array.Empty<byte>(), false);
+
+        string url = parts[1];
+        string hostPart;
+        int port;
+
+        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            string rest = url.Substring(7);
+            int slashIdx = rest.IndexOf('/');
+            string hostPortStr = slashIdx >= 0 ? rest[..slashIdx] : rest;
+            (hostPart, port) = ParseHostPort(hostPortStr, 80);
+        }
+        else
+        {
+            // Берём из заголовка Host:
+            string headers = sb.ToString();
+            int hostIdx = headers.IndexOf("Host:", StringComparison.OrdinalIgnoreCase);
+            if (hostIdx < 0) return ("", 0, Array.Empty<byte>(), false);
+            int eol = headers.IndexOf('\n', hostIdx);
+            string hostLine = (eol >= 0
+                ? headers.Substring(hostIdx + 5, eol - hostIdx - 5)
+                : headers[(hostIdx + 5)..]).Trim().TrimEnd('\r');
+            (hostPart, port) = ParseHostPort(hostLine, 80);
+        }
+
+        byte[] requestBytes = System.Text.Encoding.ASCII.GetBytes(sb.ToString());
+        return (hostPart, port, requestBytes, true);
+    }
+
+    // Вспомогательный метод: извлекает host и port из строки вида "host:port" или "host"
+    private static (string host, int port) ParseHostPort(string hostPort, int defaultPort)
+    {
+        int colonIdx = hostPort.LastIndexOf(':');
+        if (colonIdx >= 0 && int.TryParse(hostPort[(colonIdx + 1)..], out int p))
+            return (hostPort[..colonIdx], p);
+        return (hostPort, defaultPort);
+    }
+
+    private static async Task<(string host, int port, bool ok)> ReadHttpConnectHeader(
+        NetworkStream s, byte[] peeked, CancellationToken ct)
+    {
+        // Начинаем с уже прочитанных байт (первые 7 = "CONNECT")
+        var sb = new System.Text.StringBuilder();
+        sb.Append(System.Text.Encoding.ASCII.GetString(peeked));
 
         try
         {
